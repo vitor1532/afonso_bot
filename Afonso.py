@@ -7,26 +7,26 @@ import win32con
 import win32gui
 
 # ================================
-# USER CONFIGURATION
+# USER CONFIGURATION & DEFAULTS
 # ================================
 WINDOW_TITLE = "Huntera"  # Title bar text of your game window
 
-# Image file templates for UI elements
-UI_TEMPLATES = {
-    'INICIAR_CACADA_TOP': 'iniciar_cacada_top.png',
-    'ORGANIZAR_CACADA':    'organizar_cacada.png',
-    'SEARCH_BAR':          'search_bar.png',
-    'FIRST_SEARCH_RESULT': 'first_search_result.png',
-    'INICIAR_COM_O_TIME':  'iniciar_com_o_time.png',
-    'SAIR_DA_CACADA':      'sair_da_cacada.png',
+# Available difficulties mapped to their visual image templates (off and on states)
+DIFFICULTIES = {
+    "1": ("Cauteloso", ["cauteloso_off.png", "cauteloso_on.png"]),
+    "2": ("Ousado",    ["ousado_off.png",    "ousado_on.png"]),
+    "3": ("Agressivo", ["agressivo_off.png", "agressivo_on.png"]),
+    "4": ("Suicida",   ["suicida_off.png",   "suicida_on.png"]),
 }
 
-# Available difficulties mapped to their visual image templates
-DIFFICULTIES = {
-    "1": ("Cauteloso", "cauteloso.png"),
-    "2": ("Ousado", "ousado.png"),
-    "3": ("Agressivo", "agressivo.png"),
-    "4": ("Suicida", "suicida.png"),
+# Static coordinates for fixed elements
+COORDS = {
+    'INICIAR_CACADA_TOP_BUTTON': (956, 146),
+    'ORGANIZAR_CACADA_CARD':     (515, 490),
+    'SEARCH_BAR':                (394, 408),
+    'FIRST_SEARCH_RESULT':       (412, 480),
+    'INICIAR_COM_O_TIME':        (999, 734),
+    'SAIR_DA_CACADA':            (832, 797),
 }
 
 # ================================
@@ -65,10 +65,10 @@ def get_user_configuration():
     while True:
         diff_choice = input("Choice (1-4) [Default: 4]: ").strip()
         if not diff_choice:
-            difficulty_name, diff_template = DIFFICULTIES["4"]
+            difficulty_name, template_files = DIFFICULTIES["4"]
             break
         if diff_choice in DIFFICULTIES:
-            difficulty_name, diff_template = DIFFICULTIES[diff_choice]
+            difficulty_name, template_files = DIFFICULTIES[diff_choice]
             break
         print("Invalid choice! Please enter a number between 1 and 4.")
 
@@ -79,10 +79,10 @@ def get_user_configuration():
     print(f"  • Difficulty: {difficulty_name}")
     print("-" * 45 + "\n")
 
-    return hunt_name, hunt_time_minutes, difficulty_name, diff_template
+    return hunt_name, hunt_time_minutes, difficulty_name, template_files
 
 # ================================
-# VISION & API HELPER FUNCTIONS
+# HELPER FUNCTIONS (BACKGROUND API & VISION)
 # ================================
 def get_window_handle(title_substring):
     """Finds the window handle that is currently MAXIMIZED and matches the title."""
@@ -100,7 +100,7 @@ def get_window_handle(title_substring):
     return hwnds[0]
 
 def send_click(hwnd, x, y):
-    """Sends a left mouse click directly to target relative coordinates inside the window."""
+    """Sends a left mouse click directly to target coordinates inside the window."""
     l_param = win32api.MAKELONG(x, y)
     win32api.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, l_param)
     time.sleep(0.05)
@@ -112,56 +112,43 @@ def send_text(hwnd, text):
         win32api.PostMessage(hwnd, win32con.WM_CHAR, ord(char), 0)
         time.sleep(0.03)
 
-def find_image_in_window(hwnd, template_path, confidence=0.8):
+def find_image_in_window(hwnd, template_paths, confidence=0.6):
     """
-    Captures window screenshot and uses OpenCV Template Matching
-    to return relative (x, y) target coordinates if found.
+    Captures window screenshot and attempts template matching against one or multiple
+    template image paths (useful for multi-state buttons like ON/OFF or active/inactive).
     """
+    if isinstance(template_paths, str):
+        template_paths = [template_paths]
+
     left, top, right, bottom = win32gui.GetClientRect(hwnd)
     client_left, client_top = win32gui.ClientToScreen(hwnd, (0, 0))
     bbox = (client_left, client_top, client_left + right, client_top + bottom)
 
-    # Capture window area
     screenshot = ImageGrab.grab(bbox)
     img_gray = cv2.cvtColor(np.array(screenshot), cv2.COLOR_BGR2GRAY)
 
-    template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
-    if template is None:
-        raise FileNotFoundError(f"Template image file '{template_path}' was not found in directory!")
+    for path in template_paths:
+        template = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        if template is None:
+            continue
 
-    w, h = template.shape[1], template.shape[0]
+        w, h = template.shape[1], template.shape[0]
+        res = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(res)
 
-    # Perform Template Matching
-    res = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED)
-    _, max_val, _, max_loc = cv2.minMaxLoc(res)
-
-    if max_val >= confidence:
-        center_x = max_loc[0] + w // 2
-        center_y = max_loc[1] + h // 2
-        return (center_x, center_y)
+        if max_val >= confidence:
+            center_x = max_loc[0] + w // 2
+            center_y = max_loc[1] + h // 2
+            return (center_x, center_y)
 
     return None
-
-def click_template(hwnd, template_path, element_name, retries=5, delay=0.5, confidence=0.8):
-    """
-    Attempts to locate and click a UI template on screen with retries.
-    """
-    for attempt in range(1, retries + 1):
-        coords = find_image_in_window(hwnd, template_path, confidence=confidence)
-        if coords:
-            print(f"[{element_name}] Found at {coords}. Clicking...")
-            send_click(hwnd, *coords)
-            return True
-        time.sleep(delay)
-    
-    print(f"[{element_name}] Warning: Could not locate visual template ({template_path}).")
-    return False
 
 # ================================
 # MAIN LOOP
 # ================================
 def run_bot():
-    hunt_name, hunt_time_minutes, difficulty_name, diff_template = get_user_configuration()
+    # Prompt user for settings before starting
+    hunt_name, hunt_time_minutes, difficulty_name, template_files = get_user_configuration()
 
     hwnd = get_window_handle(WINDOW_TITLE)
     print(f"Connected to window handle: {hwnd}")
@@ -173,42 +160,48 @@ def run_bot():
         
         # Step 1: Click top "Iniciar caçada" button
         print("Opening hunt menu...")
-        click_template(hwnd, UI_TEMPLATES['INICIAR_CACADA_TOP'], "Top Iniciar Caçada Button")
-        time.sleep(0.3)
+        send_click(hwnd, *COORDS['INICIAR_CACADA_TOP_BUTTON'])
+        time.sleep(0.2)
         
         # Step 2: Select "Organizar caçada"
-        click_template(hwnd, UI_TEMPLATES['ORGANIZAR_CACADA'], "Organizar Caçada Card")
-        time.sleep(0.3)
+        send_click(hwnd, *COORDS['ORGANIZAR_CACADA_CARD'])
+        time.sleep(0.2)
         
         # Step 3: Search for the hunt
         print(f"Searching for hunt: '{hunt_name}'")
-        if click_template(hwnd, UI_TEMPLATES['SEARCH_BAR'], "Search Bar"):
-            time.sleep(0.2)
-            
-            # Clear search box using Backspaces
-            for _ in range(25):
-                win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, win32con.VK_BACK, 0)
-                win32api.PostMessage(hwnd, win32con.WM_KEYUP, win32con.VK_BACK, 0)
-                time.sleep(0.02)
-                
-            send_text(hwnd, hunt_name)
-            time.sleep(0.5)
+        send_click(hwnd, *COORDS['SEARCH_BAR'])
+        time.sleep(0.2)
         
-        # Step 4: Click the search result
-        print("Selecting hunt from search results...")
-        click_template(hwnd, UI_TEMPLATES['FIRST_SEARCH_RESULT'], "First Search Result")
+        # Clear search box using Backspaces
+        for _ in range(25):
+            win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, win32con.VK_BACK, 0)
+            win32api.PostMessage(hwnd, win32con.WM_KEYUP, win32con.VK_BACK, 0)
+            time.sleep(0.02)
+            
+        send_text(hwnd, hunt_name)
         time.sleep(0.5)
         
-        # Step 5: Dynamic difficulty detection
-        print(f"Selecting difficulty '{difficulty_name}'...")
-        click_template(hwnd, diff_template, f"Difficulty: {difficulty_name}")
-        time.sleep(1.5)
+        # Step 4: Click the search result
+        print("Selecting hunt...")
+        send_click(hwnd, *COORDS['FIRST_SEARCH_RESULT'])
+        time.sleep(0.5)
+        
+        # Step 5: Dynamic difficulty detection via Template Matching
+        print(f"Locating '{difficulty_name}' button on screen...")
+        diff_coords = find_image_in_window(hwnd, template_files, confidence=0.75)
+        
+        if diff_coords:
+            print(f"Button found at relative coordinates: {diff_coords}. Clicking...")
+            send_click(hwnd, *diff_coords)
+            time.sleep(1.5)
+        else:
+            print(f"Warning: Could not visually locate '{difficulty_name}' button ({template_files}). Skipping difficulty click.")
         
         # Step 6: Click "Iniciar com o time"
         print("Starting hunt ('Iniciar com o time')...")
-        click_template(hwnd, UI_TEMPLATES['INICIAR_COM_O_TIME'], "Iniciar com o time")
-        time.sleep(1.0)
-        click_template(hwnd, UI_TEMPLATES['INICIAR_COM_O_TIME'], "Iniciar com o time (Confirm)")
+        send_click(hwnd, *COORDS['INICIAR_COM_O_TIME'])
+        time.sleep(1)
+        send_click(hwnd, *COORDS['INICIAR_COM_O_TIME'])
         time.sleep(0.5)
         
         # Step 7: Wait out the duration timer
@@ -218,9 +211,9 @@ def run_bot():
         
         # Step 8: Click "SAIR DA CAÇADA"
         print("Time reached! Exiting hunt...")
-        click_template(hwnd, UI_TEMPLATES['SAIR_DA_CACADA'], "Sair da Caçada")
+        send_click(hwnd, *COORDS['SAIR_DA_CACADA'])
         
-        # Step 9: Post-exit delay
+        # Step 9: Wait ~1.5 seconds after exiting
         time.sleep(1.5)
         
         loop_count += 1
