@@ -4,28 +4,83 @@ import win32con
 import win32gui
 
 # ================================
-# USER CONFIGURATION & VARIABLES
+# USER CONFIGURATION & DEFAULTS
 # ================================
 WINDOW_TITLE = "Huntera"  # Title bar text of your game window
 
-HUNT_NAME = "Spider Nest"     # Name of the hunt to search
-HUNT_TIME_MINUTES = 0.4         # Time in minutes per hunt session
-DIFFICULTY = "Suicida"         # Options: Cauteloso, Ousado, Agressivo, Suicida
+# Available difficulties mapped to their prompt values
+DIFFICULTIES = {
+    "1": ("Cauteloso", "DIFFICULTY_CAUTELOSO"),
+    "2": ("Ousado", "DIFFICULTY_OUSADO"),
+    "3": ("Agressivo", "DIFFICULTY_AGRESSIVO"),
+    "4": ("Suicida", "DIFFICULTY_SUICIDA"),
+}
 
 # Relative click target coordinates inside the game client window (X, Y)
-# Adjust these coordinates based on your game resolution/UI layout:
 COORDS = {
-    'INICIAR_CACADA_TOP_BUTTON': (956, 146),  # "Iniciar caçada" button on the top bar
-    'ORGANIZAR_CACADA_CARD':     (515, 490), # "Explorar caçadas" or "Organizar caçada" card
-    'SEARCH_BAR':                (394, 408), # Search input field
-    'FIRST_SEARCH_RESULT':       (412, 480), # First hunt result card
-    'DIFFICULTY_CAUTELOSO':      (382, 479),  # Difficulty buttons
+    'INICIAR_CACADA_TOP_BUTTON': (956, 146),
+    'ORGANIZAR_CACADA_CARD':     (515, 490),
+    'SEARCH_BAR':                (394, 408),
+    'FIRST_SEARCH_RESULT':       (412, 480),
+    'DIFFICULTY_CAUTELOSO':      (382, 479),
     'DIFFICULTY_OUSADO':         (465, 476),
     'DIFFICULTY_AGRESSIVO':      (551, 478),
     'DIFFICULTY_SUICIDA':        (630, 480),
-    'INICIAR_COM_O_TIME':        (999, 734), # "Iniciar com o time" button
-    'SAIR_DA_CACADA':            (832, 797), # "SAIR DA CAÇADA" button
+    'INICIAR_COM_O_TIME':        (999, 734),
+    'SAIR_DA_CACADA':            (832, 797),
 }
+
+# ================================
+# CONSOLE INTERACTIVE SETUP
+# ================================
+def get_user_configuration():
+    print("=" * 45)
+    print("      HUNTERA BOT - CONFIGURATION SETUP      ")
+    print("=" * 45)
+
+    # 1. Hunt Name
+    hunt_name_input = input("Enter Hunt Name [Default: Spider Nest]: ").strip()
+    hunt_name = hunt_name_input if hunt_name_input else "Spider Nest"
+
+    # 2. Hunt Time in Minutes
+    while True:
+        time_input = input("Enter Hunt Duration in minutes [Default: 0.4]: ").strip()
+        if not time_input:
+            hunt_time_minutes = 0.4
+            break
+        try:
+            hunt_time_minutes = float(time_input)
+            if hunt_time_minutes > 0:
+                break
+            print("Please enter a positive number.")
+        except ValueError:
+            print("Invalid input! Please enter a valid number (e.g., 0.4 or 5).")
+
+    # 3. Difficulty
+    print("\nSelect Difficulty:")
+    print(" [1] Cauteloso")
+    print(" [2] Ousado")
+    print(" [3] Agressivo")
+    print(" [4] Suicida (Default)")
+    
+    while True:
+        diff_choice = input("Choice (1-4) [Default: 4]: ").strip()
+        if not diff_choice:
+            difficulty_name, diff_coord_key = DIFFICULTIES["4"]
+            break
+        if diff_choice in DIFFICULTIES:
+            difficulty_name, diff_coord_key = DIFFICULTIES[diff_choice]
+            break
+        print("Invalid choice! Please enter a number between 1 and 4.")
+
+    print("\n" + "-" * 45)
+    print(f" CONFIGURATION CONFIRMED:")
+    print(f"  • Hunt Name : {hunt_name}")
+    print(f"  • Duration  : {hunt_time_minutes} minute(s)")
+    print(f"  • Difficulty: {difficulty_name}")
+    print("-" * 45 + "\n")
+
+    return hunt_name, hunt_time_minutes, diff_coord_key
 
 # ================================
 # HELPER FUNCTIONS (BACKGROUND API)
@@ -34,10 +89,7 @@ def get_window_handle(title_substring):
     """Finds the window handle that is currently MAXIMIZED and matches the title."""
     def enum_windows_callback(hwnd, extra):
         if win32gui.IsWindowVisible(hwnd) and title_substring.lower() in win32gui.GetWindowText(hwnd).lower():
-            # Get window placement state
-            # flags, showCmd, ptMin, ptMax, rect = win32gui.GetWindowPlacement(hwnd)
             placement = win32gui.GetWindowPlacement(hwnd)
-            # win32con.SW_SHOWMAXIMIZED is 3
             if placement[1] == win32con.SW_SHOWMAXIMIZED:
                 extra.append(hwnd)
 
@@ -58,7 +110,6 @@ def send_click(hwnd, x, y):
 def send_text(hwnd, text):
     """Sends keystrokes directly to the target window."""
     for char in text:
-        # Convert character to virtual key code / message
         win32api.PostMessage(hwnd, win32con.WM_CHAR, ord(char), 0)
         time.sleep(0.03)
 
@@ -66,6 +117,9 @@ def send_text(hwnd, text):
 # MAIN LOOP
 # ================================
 def run_bot():
+    # Prompt user for settings before starting
+    hunt_name, hunt_time_minutes, diff_coord_key = get_user_configuration()
+
     hwnd = get_window_handle(WINDOW_TITLE)
     print(f"Connected to window handle: {hwnd}")
     
@@ -84,7 +138,7 @@ def run_bot():
         time.sleep(0.2)
         
         # Step 3: Search for the hunt
-        print(f"Searching for hunt: '{HUNT_NAME}'")
+        print(f"Searching for hunt: '{hunt_name}'")
         send_click(hwnd, *COORDS['SEARCH_BAR'])
         time.sleep(0.2)
         
@@ -94,7 +148,7 @@ def run_bot():
             win32api.PostMessage(hwnd, win32con.WM_KEYUP, win32con.VK_BACK, 0)
             time.sleep(0.02)
             
-        send_text(hwnd, HUNT_NAME)
+        send_text(hwnd, hunt_name)
         time.sleep(0.5)
         
         # Step 4: Click the search result
@@ -103,10 +157,9 @@ def run_bot():
         time.sleep(0.5)
         
         # Step 5: Select difficulty
-        diff_key = f"DIFFICULTY_{DIFFICULTY.upper()}"
-        if diff_key in COORDS:
-            print(f"Selecting difficulty: {DIFFICULTY}")
-            send_click(hwnd, *COORDS[diff_key])
+        if diff_coord_key in COORDS:
+            print("Selecting configured difficulty...")
+            send_click(hwnd, *COORDS[diff_coord_key])
             time.sleep(1.5)
         
         # Step 6: Click "Iniciar com o time"
@@ -117,15 +170,15 @@ def run_bot():
         time.sleep(0.5)
         
         # Step 7: Wait out the duration timer
-        duration_seconds = HUNT_TIME_MINUTES * 60
-        print(f"Hunt active. Waiting {HUNT_TIME_MINUTES} minute(s) ({duration_seconds} seconds)...")
+        duration_seconds = hunt_time_minutes * 60
+        print(f"Hunt active. Waiting {hunt_time_minutes} minute(s) ({duration_seconds} seconds)...")
         time.sleep(duration_seconds)
         
         # Step 8: Click "SAIR DA CAÇADA"
         print("Time reached! Exiting hunt...")
         send_click(hwnd, *COORDS['SAIR_DA_CACADA'])
         
-        # Step 9: Wait ~3 seconds after exiting
+        # Step 9: Wait ~1.5 seconds after exiting
         time.sleep(1.5)
         
         loop_count += 1
